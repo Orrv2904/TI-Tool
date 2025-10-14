@@ -172,7 +172,9 @@ def decode_image():
             }), 400
         
         image_url = data['url']
-        output_name = data.get('output_name', 'decoded_file')
+        # Generar nombre automático basado en timestamp
+        import time
+        output_name = f"decoded_{int(time.time())}"
         
         # Descargar imagen
         print(f"Descargando imagen: {image_url}")
