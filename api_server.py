@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
 API REST para procesar imágenes desde URLs
-Integrable con n8n
 """
 
 from flask import Flask, request, jsonify, send_file
@@ -137,7 +136,8 @@ def binary_to_bytes(binary_string):
 
 def detect_file_type(file_data):
     """Detecta tipo de archivo"""
-    if file_data.startswith(b'\x00\x00\x00\x20ftypisom') or file_data.startswith(b'mp4'):
+    # MP4 - buscar ftyp en los primeros bytes
+    if b'ftyp' in file_data[:20]:
         return "mp4"
     elif file_data.startswith(b'\x89PNG'):
         return "png"
@@ -147,6 +147,10 @@ def detect_file_type(file_data):
         return "avi"
     elif file_data.startswith(b'\x1a\x45\xdf\xa3'):
         return "mkv"
+    elif file_data.startswith(b'ID3') or file_data.startswith(b'\xff\xfb'):
+        return "mp3"
+    elif file_data.startswith(b'RIFF') and b'WAVE' in file_data[:20]:
+        return "wav"
     else:
         return "bin"
 
@@ -198,27 +202,29 @@ def decode_image():
         file_data = binary_to_bytes(binary_data)
         file_type = detect_file_type(file_data)
         
-        # Crear archivo temporal
-        temp_dir = tempfile.gettempdir()
-        temp_filename = f"{output_name}_{uuid.uuid4().hex[:8]}.{file_type}"
-        temp_path = os.path.join(temp_dir, temp_filename)
+        # Crear directorio de salida si no existe
+        output_dir = "output"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
         
-        with open(temp_path, 'wb') as f:
+        # Crear archivo con nombre único
+        temp_filename = f"{output_name}_{uuid.uuid4().hex[:8]}.{file_type}"
+        file_path = os.path.join(output_dir, temp_filename)
+        
+        # Guardar archivo
+        with open(file_path, 'wb') as f:
             f.write(file_data)
         
-        # Convertir a base64 para envío
-        with open(temp_path, 'rb') as f:
-            file_base64 = base64.b64encode(f.read()).decode('utf-8')
-        
-        # Limpiar archivo temporal
-        os.remove(temp_path)
+        # Obtener la URL base del request
+        base_url = request.url_root.rstrip('/')
+        download_url = f"{base_url}/download/{temp_filename}"
         
         return jsonify({
             "success": True,
             "file_type": file_type,
             "file_size": len(file_data),
-            "file_data": file_base64,
-            "download_url": f"/download/{temp_filename}",
+            "download_url": download_url,
+            "filename": temp_filename,
             "message": f"Archivo {file_type} extraído exitosamente"
         })
         
@@ -232,8 +238,8 @@ def decode_image():
 def download_file(filename):
     """Descarga archivo decodificado"""
     try:
-        temp_dir = tempfile.gettempdir()
-        file_path = os.path.join(temp_dir, filename)
+        output_dir = "output"
+        file_path = os.path.join(output_dir, filename)
         
         if not os.path.exists(file_path):
             return jsonify({"error": "Archivo no encontrado"}), 404
@@ -264,15 +270,20 @@ def decode_image_direct():
         file_data = binary_to_bytes(binary_data)
         file_type = detect_file_type(file_data)
         
-        # Crear archivo temporal
-        temp_dir = tempfile.gettempdir()
-        temp_filename = f"decoded_{uuid.uuid4().hex[:8]}.{file_type}"
-        temp_path = os.path.join(temp_dir, temp_filename)
+        # Crear directorio de salida si no existe
+        output_dir = "output"
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
         
-        with open(temp_path, 'wb') as f:
+        # Crear archivo con nombre único
+        temp_filename = f"decoded_{uuid.uuid4().hex[:8]}.{file_type}"
+        file_path = os.path.join(output_dir, temp_filename)
+        
+        # Guardar archivo
+        with open(file_path, 'wb') as f:
             f.write(file_data)
         
-        return send_file(temp_path, as_attachment=True, download_name=f"decoded.{file_type}")
+        return send_file(file_path, as_attachment=True, download_name=f"decoded.{file_type}")
         
     except Exception as e:
         return jsonify({"error": str(e)}), 500
