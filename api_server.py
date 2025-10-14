@@ -154,6 +154,42 @@ def detect_file_type(file_data):
     else:
         return "bin"
 
+def cleanup_old_files():
+    """Limpia archivos antiguos (más de 1 día)"""
+    try:
+        output_dir = "output"
+        if not os.path.exists(output_dir):
+            return 0
+        
+        import time
+        current_time = time.time()
+        cleaned_count = 0
+        total_files = 0
+        
+        for filename in os.listdir(output_dir):
+            file_path = os.path.join(output_dir, filename)
+            if os.path.isfile(file_path):
+                total_files += 1
+                file_age = current_time - os.path.getmtime(file_path)
+                if file_age > 86400:  # 1 día = 86400 segundos
+                    try:
+                        os.remove(file_path)
+                        cleaned_count += 1
+                        print(f"Archivo antiguo eliminado: {filename}")
+                    except Exception as e:
+                        print(f"Error eliminando {filename}: {e}")
+        
+        if cleaned_count > 0:
+            print(f"Limpieza completada: {cleaned_count} archivos eliminados de {total_files} total")
+        else:
+            print(f"Limpieza completada: 0 archivos eliminados de {total_files} total")
+            
+        return cleaned_count
+            
+    except Exception as e:
+        print(f"Error en limpieza: {e}")
+        return 0
+
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
@@ -207,6 +243,9 @@ def decode_image():
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
         
+        # Limpiar archivos antiguos
+        cleaned_files = cleanup_old_files()
+        
         # Crear archivo con nombre único
         temp_filename = f"{output_name}_{uuid.uuid4().hex[:8]}.{file_type}"
         file_path = os.path.join(output_dir, temp_filename)
@@ -219,12 +258,24 @@ def decode_image():
         base_url = request.url_root.rstrip('/')
         download_url = f"{base_url}/download/{temp_filename}"
         
+        # Calcular fecha de eliminación (1 día desde ahora)
+        import datetime
+        deletion_date = datetime.datetime.now() + datetime.timedelta(days=1)
+        deletion_timestamp = int(deletion_date.timestamp())
+        
         return jsonify({
             "success": True,
             "file_type": file_type,
             "file_size": len(file_data),
             "download_url": download_url,
             "filename": temp_filename,
+            "deletion_date": deletion_date.strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "deletion_timestamp": deletion_timestamp,
+            "expires_in_hours": 24,
+            "cleanup_info": {
+                "files_cleaned": cleaned_files,
+                "cleanup_message": f"Se eliminaron {cleaned_files} archivos antiguos"
+            },
             "message": f"Archivo {file_type} extraído exitosamente"
         })
         
@@ -274,6 +325,9 @@ def decode_image_direct():
         output_dir = "output"
         if not os.path.exists(output_dir):
             os.makedirs(output_dir)
+        
+        # Limpiar archivos antiguos
+        cleanup_old_files()
         
         # Crear archivo con nombre único
         temp_filename = f"decoded_{uuid.uuid4().hex[:8]}.{file_type}"
