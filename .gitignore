@@ -1,0 +1,171 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+TT_Img_Loc.build/
+TT_Img_Loc.dist/
+TT_Img_Loc.onefile-build/
+
+# PyInstaller
+*.manifest
+*.spec
+
+extract_zip.py
+tt_img_dec_loc.py
+tt_img_dec_pw_loc.py
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Translations
+*.mo
+*.pot
+
+*.dll
+
+# Django stuff:
+*.log
+local_settings.py
+db.sqlite3
+
+# Flask stuff:
+instance/
+.webassets-cache
+
+# Scrapy stuff:
+.scrapy
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# celery beat schedule file
+celerybeat-schedule
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ComfyUI specific
+output/
+temp/
+*.jpg
+*.jpeg
+*.mp4
+*.avi
+*.mov
+
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+tt_img_dec_pw_loc.py
+tt_img_dec_pw_loc.py
+tt_img_dec_pw_loc.py
+TT_Img_Loc.py
+test_encoded.png
+nopw_img.png
+pw_v_test.png
+ComfyUI_00001_rmoca_1758041440.png
+ComfyUI_00003_plory_1758041060.png
+nuitka-crash-report.xml
+ComfyUI_00114_pw.png
+TT_Img_Loc1.py
+test_decode_output.py
+t1.png
+t2.png
+t3.png
+t4.png
+t5.png
+TT_Img_Loc_V2.py
+v2_test.png
+v2_test_1.png
+v2test1.png
+v2test1_1.png
+v2_test_3.png
+v2_test_2_1.png
+v2_test_2.png
+v2tt.png
+v2t.png
+v2tt_1.png
+v2_t_1_1.png
+v2_t_1_2.png
+v2_t_1.png
+v2_t_2_1.png
+v2_t_2_2.png
+v2_t_2.png
+tt_img_dec_v2_node_beta.py
