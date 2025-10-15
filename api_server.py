@@ -135,24 +135,119 @@ def binary_to_bytes(binary_string):
         raise Exception(f"Error convirtiendo binario: {e}")
 
 def detect_file_type(file_data):
-    """Detecta tipo de archivo"""
-    # MP4 - buscar ftyp en los primeros bytes
-    if b'ftyp' in file_data[:20]:
-        return "mp4"
-    elif file_data.startswith(b'\x89PNG'):
-        return "png"
+    """Detecta tipo de archivo y extrae datos si es necesario"""
+    
+    # === DETECCIÓN DE IMÁGENES EMBEBIDAS ===
+    
+    # Buscar PNG embebido
+    png_start = file_data.find(b'\x89PNG')
+    if png_start != -1:
+        png_data = file_data[png_start:]
+        if len(png_data) > 8 and png_data.startswith(b'\x89PNG'):
+            return "png", png_data
+    
+    # Buscar JPEG embebido
+    jpg_start = file_data.find(b'\xFF\xD8\xFF')
+    if jpg_start != -1:
+        jpg_data = file_data[jpg_start:]
+        if len(jpg_data) > 4 and jpg_data.startswith(b'\xFF\xD8\xFF'):
+            return "jpg", jpg_data
+    
+    # Buscar GIF embebido
+    gif_start = file_data.find(b'GIF87a')
+    if gif_start == -1:
+        gif_start = file_data.find(b'GIF89a')
+    if gif_start != -1:
+        gif_data = file_data[gif_start:]
+        if len(gif_data) > 6 and (gif_data.startswith(b'GIF87a') or gif_data.startswith(b'GIF89a')):
+            return "gif", gif_data
+    
+    # Buscar WEBP embebido
+    webp_start = file_data.find(b'RIFF')
+    if webp_start != -1 and b'WEBP' in file_data[webp_start:webp_start+12]:
+        webp_data = file_data[webp_start:]
+        if len(webp_data) > 12 and webp_data.startswith(b'RIFF') and b'WEBP' in webp_data[:12]:
+            return "webp", webp_data
+    
+    # Buscar BMP embebido
+    bmp_start = file_data.find(b'BM')
+    if bmp_start != -1:
+        bmp_data = file_data[bmp_start:]
+        if len(bmp_data) > 2 and bmp_data.startswith(b'BM'):
+            return "bmp", bmp_data
+    
+    # Buscar TIFF embebido
+    tiff_start = file_data.find(b'II*\x00')
+    if tiff_start == -1:
+        tiff_start = file_data.find(b'MM\x00*')
+    if tiff_start != -1:
+        tiff_data = file_data[tiff_start:]
+        if len(tiff_data) > 4 and (tiff_data.startswith(b'II*\x00') or tiff_data.startswith(b'MM\x00*')):
+            return "tiff", tiff_data
+    
+    # Buscar ICO embebido
+    ico_start = file_data.find(b'\x00\x00\x01\x00')
+    if ico_start != -1:
+        ico_data = file_data[ico_start:]
+        if len(ico_data) > 4 and ico_data.startswith(b'\x00\x00\x01\x00'):
+            return "ico", ico_data
+    
+    # Buscar SVG embebido (texto XML)
+    svg_start = file_data.find(b'<svg')
+    if svg_start == -1:
+        svg_start = file_data.find(b'<SVG')
+    if svg_start != -1:
+        # Buscar el final del SVG
+        svg_end = file_data.find(b'</svg>', svg_start)
+        if svg_end == -1:
+            svg_end = file_data.find(b'</SVG>', svg_start)
+        if svg_end != -1:
+            svg_data = file_data[svg_start:svg_end + 6]  # Incluir </svg>
+            return "svg", svg_data
+    
+    # === DETECCIÓN DE VIDEOS EMBEBIDOS ===
+    
+    # Buscar MP4 embebido
+    mp4_start = file_data.find(b'ftyp')
+    if mp4_start != -1 and mp4_start < 20:
+        mp4_data = file_data[mp4_start-4:]  # Incluir los 4 bytes anteriores
+        return "mp4", mp4_data
+    
+    # === DETECCIÓN DE TIPOS DIRECTOS ===
+    
+    # Imágenes directas
+    if file_data.startswith(b'\x89PNG'):
+        return "png", file_data
     elif file_data.startswith(b'\xFF\xD8\xFF'):
-        return "jpg"
+        return "jpg", file_data
+    elif file_data.startswith(b'GIF87a') or file_data.startswith(b'GIF89a'):
+        return "gif", file_data
+    elif file_data.startswith(b'RIFF') and b'WEBP' in file_data[:12]:
+        return "webp", file_data
+    elif file_data.startswith(b'BM'):
+        return "bmp", file_data
+    elif file_data.startswith(b'II*\x00') or file_data.startswith(b'MM\x00*'):
+        return "tiff", file_data
+    elif file_data.startswith(b'\x00\x00\x01\x00'):
+        return "ico", file_data
+    elif file_data.startswith(b'<svg') or file_data.startswith(b'<SVG'):
+        return "svg", file_data
+    
+    # Videos directos
     elif file_data.startswith(b'RIFF') and b'AVI' in file_data[:20]:
-        return "avi"
+        return "avi", file_data
     elif file_data.startswith(b'\x1a\x45\xdf\xa3'):
-        return "mkv"
+        return "mkv", file_data
+    
+    # Audio directo
     elif file_data.startswith(b'ID3') or file_data.startswith(b'\xff\xfb'):
-        return "mp3"
+        return "mp3", file_data
     elif file_data.startswith(b'RIFF') and b'WAVE' in file_data[:20]:
-        return "wav"
+        return "wav", file_data
+    
+    # Fallback
     else:
-        return "bin"
+        return "bin", file_data
 
 def cleanup_old_files():
     """Limpia archivos antiguos (más de 1 día)"""
@@ -236,7 +331,7 @@ def decode_image():
         
         # Convertir a bytes
         file_data = binary_to_bytes(binary_data)
-        file_type = detect_file_type(file_data)
+        file_type, extracted_data = detect_file_type(file_data)
         
         # Crear directorio de salida si no existe
         output_dir = "output"
@@ -252,7 +347,7 @@ def decode_image():
         
         # Guardar archivo
         with open(file_path, 'wb') as f:
-            f.write(file_data)
+            f.write(extracted_data)
         
         # Obtener la URL base del request
         base_url = request.url_root.rstrip('/')
@@ -266,7 +361,7 @@ def decode_image():
         return jsonify({
             "success": True,
             "file_type": file_type,
-            "file_size": len(file_data),
+            "file_size": len(extracted_data),
             "download_url": download_url,
             "filename": temp_filename,
             "deletion_date": deletion_date.strftime("%Y-%m-%d %H:%M:%S UTC"),
@@ -319,7 +414,7 @@ def decode_image_direct():
             return jsonify({"error": "No se encontraron datos ocultos"}), 404
         
         file_data = binary_to_bytes(binary_data)
-        file_type = detect_file_type(file_data)
+        file_type, extracted_data = detect_file_type(file_data)
         
         # Crear directorio de salida si no existe
         output_dir = "output"
@@ -335,7 +430,7 @@ def decode_image_direct():
         
         # Guardar archivo
         with open(file_path, 'wb') as f:
-            f.write(file_data)
+            f.write(extracted_data)
         
         return send_file(file_path, as_attachment=True, download_name=f"decoded.{file_type}")
         
