@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
-"""
-API REST para procesar imágenes desde URLs
-"""
+# -*- coding: utf-8 -*-
 
 from flask import Flask, request, jsonify, send_file
 import requests
@@ -12,8 +10,13 @@ import tempfile
 import uuid
 from io import BytesIO
 import base64
+import time
 
 app = Flask(__name__)
+
+# Directorio para archivos temporales
+UPLOAD_FOLDER = 'output'
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 def download_image_from_url(url):
     """Descarga imagen desde URL o data URL"""
@@ -62,7 +65,7 @@ def load_image_from_bytes(image_bytes):
         raise Exception(f"Error procesando imagen: {e}")
 
 def extract_binary_from_lsb(image_array):
-    """Extrae datos binarios de los LSB"""
+    """Extrae datos binarios de los LSB con múltiples estrategias"""
     try:
         height, width, channels = image_array.shape
         
@@ -140,45 +143,92 @@ def convert_to_png(image_data, original_format):
         from PIL import Image
         import io
         
+        print(f"Convirtiendo {original_format.upper()} a PNG...")
+        print(f"  Datos originales: {len(image_data)} bytes")
+        print(f"  Magic bytes: {image_data[:8].hex()}")
+        
         # Abrir imagen desde bytes
         img = Image.open(io.BytesIO(image_data))
+        print(f"  Imagen abierta: {img.size}, modo: {img.mode}")
         
-        # Convertir a RGB si es necesario (para formatos con paleta)
-        if img.mode in ('RGBA', 'LA', 'P'):
-            # Mantener transparencia si existe
-            if img.mode == 'P' and 'transparency' in img.info:
-                img = img.convert('RGBA')
-            elif img.mode == 'P':
-                img = img.convert('RGB')
-        elif img.mode not in ('RGB', 'RGBA'):
-            img = img.convert('RGB')
-        
-        # Convertir a PNG en memoria
+        # Convertir a PNG
         png_buffer = io.BytesIO()
-        img.save(png_buffer, format='PNG', optimize=True)
+        img.save(png_buffer, format='PNG')
         png_data = png_buffer.getvalue()
         
-        print(f"Convertido {original_format.upper()} a PNG: {len(image_data)} -> {len(png_data)} bytes")
+        print(f"  PNG generado: {len(png_data)} bytes")
+        print(f"  PNG magic: {png_data[:8].hex()}")
+        print(f"CONVERSIÓN EXITOSA: {original_format.upper()} -> PNG")
         return png_data
         
     except Exception as e:
-        print(f"Error convirtiendo {original_format} a PNG: {e}")
-        # Si falla la conversión, devolver datos originales
+        print(f"ERROR convirtiendo {original_format} a PNG: {e}")
+        print(f"  Devolviendo datos originales ({len(image_data)} bytes)")
         return image_data
 
-def convert_svg_to_png(svg_data):
-    """Convierte SVG a PNG (requiere librería adicional)"""
-    try:
-        # Para SVG, por ahora devolvemos los datos originales
-        # En producción se podría usar cairosvg o similar
-        print("SVG detectado - manteniendo formato original (conversión SVG→PNG no implementada)")
-        return svg_data
-    except Exception as e:
-        print(f"Error procesando SVG: {e}")
-        return svg_data
-
 def detect_file_type(file_data):
-    """Detecta tipo de archivo y extrae datos si es necesario"""
+    """Detecta tipo de archivo y lo convierte a PNG si es necesario"""
+    
+    # === DETECCIÓN DE IMÁGENES DIRECTAS ===
+    
+    # PNG directo
+    if file_data.startswith(b'\x89PNG'):
+        return "png", file_data
+    
+    # JPEG → PNG
+    elif file_data.startswith(b'\xFF\xD8\xFF'):
+        png_data = convert_to_png(file_data, "jpg")
+        return "png", png_data
+    
+    # GIF → PNG
+    elif file_data.startswith(b'GIF87a') or file_data.startswith(b'GIF89a'):
+        png_data = convert_to_png(file_data, "gif")
+        return "png", png_data
+    
+    # WEBP → PNG
+    elif file_data.startswith(b'RIFF') and b'WEBP' in file_data[:12]:
+        png_data = convert_to_png(file_data, "webp")
+        return "png", png_data
+    
+    # BMP → PNG (con validación mejorada)
+    elif file_data.startswith(b'BM'):
+        print(f"BMP detectado, validando header...")
+        if len(file_data) >= 6:
+            bmp_size = int.from_bytes(file_data[2:6], byteorder='little')
+            print(f"Tamaño del BMP según header: {bmp_size} bytes")
+            
+            # Solo procesar si el tamaño es razonable
+            if 1000 <= bmp_size <= len(file_data) and bmp_size <= 50 * 1024 * 1024:  # Max 50MB
+                bmp_data = file_data[:bmp_size]
+                print(f"BMP válido, convirtiendo a PNG...")
+                png_data = convert_to_png(bmp_data, "bmp")
+                return "png", png_data
+            else:
+                print(f"BMP con tamaño inválido: {bmp_size} bytes, saltando...")
+                return "bin", file_data
+        else:
+            print("BMP con header incompleto")
+            return "bin", file_data
+    
+    # TIFF → PNG
+    elif file_data.startswith(b'II*\x00') or file_data.startswith(b'MM\x00*'):
+        png_data = convert_to_png(file_data, "tiff")
+        return "png", png_data
+    
+    # ICO → PNG
+    elif file_data.startswith(b'\x00\x00\x01\x00'):
+        png_data = convert_to_png(file_data, "ico")
+        return "png", png_data
+    
+    # === DETECCIÓN DE VIDEOS EMBEBIDOS ===
+    
+    # Buscar MP4 embebido
+    mp4_start = file_data.find(b'ftyp')
+    if mp4_start != -1 and mp4_start < 20:
+        print(f"MP4 embebido encontrado en posicion: {mp4_start}")
+        mp4_data = file_data[mp4_start-4:]  # Incluir los 4 bytes anteriores
+        print(f"MP4 válido, tamaño: {len(mp4_data)} bytes")
+        return "mp4", mp4_data
     
     # === DETECCIÓN DE IMÁGENES EMBEBIDAS ===
     
@@ -186,16 +236,33 @@ def detect_file_type(file_data):
     png_start = file_data.find(b'\x89PNG')
     if png_start != -1:
         png_data = file_data[png_start:]
-        if len(png_data) > 8 and png_data.startswith(b'\x89PNG'):
-            return "png", png_data  # Ya es PNG, no necesita conversión
+        return "png", png_data
     
     # Buscar JPEG embebido → PNG
     jpg_start = file_data.find(b'\xFF\xD8\xFF')
     if jpg_start != -1:
         jpg_data = file_data[jpg_start:]
-        if len(jpg_data) > 4 and jpg_data.startswith(b'\xFF\xD8\xFF'):
-            png_data = convert_to_png(jpg_data, "jpg")
-            return "png", png_data
+        png_data = convert_to_png(jpg_data, "jpg")
+        return "png", png_data
+    
+    # Buscar BMP embebido → PNG (con validación)
+    bmp_start = file_data.find(b'BM')
+    if bmp_start != -1:
+        print(f"BMP embebido encontrado en posicion: {bmp_start}")
+        bmp_data = file_data[bmp_start:]
+        
+        if len(bmp_data) >= 6:
+            bmp_size = int.from_bytes(bmp_data[2:6], byteorder='little')
+            print(f"Tamaño del BMP según header: {bmp_size} bytes")
+            
+            # Solo procesar si el tamaño es razonable
+            if 1000 <= bmp_size <= len(bmp_data) and bmp_size <= 50 * 1024 * 1024:  # Max 50MB
+                bmp_data = bmp_data[:bmp_size]
+                print(f"BMP válido, convirtiendo a PNG...")
+                png_data = convert_to_png(bmp_data, "bmp")
+                return "png", png_data
+            else:
+                print(f"BMP embebido con tamaño inválido: {bmp_size} bytes, saltando...")
     
     # Buscar GIF embebido → PNG
     gif_start = file_data.find(b'GIF87a')
@@ -203,130 +270,28 @@ def detect_file_type(file_data):
         gif_start = file_data.find(b'GIF89a')
     if gif_start != -1:
         gif_data = file_data[gif_start:]
-        if len(gif_data) > 6 and (gif_data.startswith(b'GIF87a') or gif_data.startswith(b'GIF89a')):
-            png_data = convert_to_png(gif_data, "gif")
-            return "png", png_data
+        png_data = convert_to_png(gif_data, "gif")
+        return "png", png_data
     
     # Buscar WEBP embebido → PNG
     webp_start = file_data.find(b'RIFF')
     if webp_start != -1 and b'WEBP' in file_data[webp_start:webp_start+12]:
         webp_data = file_data[webp_start:]
-        if len(webp_data) > 12 and webp_data.startswith(b'RIFF') and b'WEBP' in webp_data[:12]:
-            png_data = convert_to_png(webp_data, "webp")
-            return "png", png_data
-    
-    # Buscar BMP embebido → PNG
-    bmp_start = file_data.find(b'BM')
-    if bmp_start != -1:
-        bmp_data = file_data[bmp_start:]
-        if len(bmp_data) > 2 and bmp_data.startswith(b'BM'):
-            png_data = convert_to_png(bmp_data, "bmp")
-            return "png", png_data
-    
-    # Buscar TIFF embebido → PNG
-    tiff_start = file_data.find(b'II*\x00')
-    if tiff_start == -1:
-        tiff_start = file_data.find(b'MM\x00*')
-    if tiff_start != -1:
-        tiff_data = file_data[tiff_start:]
-        if len(tiff_data) > 4 and (tiff_data.startswith(b'II*\x00') or tiff_data.startswith(b'MM\x00*')):
-            png_data = convert_to_png(tiff_data, "tiff")
-            return "png", png_data
-    
-    # Buscar ICO embebido → PNG
-    ico_start = file_data.find(b'\x00\x00\x01\x00')
-    if ico_start != -1:
-        ico_data = file_data[ico_start:]
-        if len(ico_data) > 4 and ico_data.startswith(b'\x00\x00\x01\x00'):
-            png_data = convert_to_png(ico_data, "ico")
-            return "png", png_data
-    
-    # Buscar SVG embebido → PNG
-    svg_start = file_data.find(b'<svg')
-    if svg_start == -1:
-        svg_start = file_data.find(b'<SVG')
-    if svg_start != -1:
-        # Buscar el final del SVG
-        svg_end = file_data.find(b'</svg>', svg_start)
-        if svg_end == -1:
-            svg_end = file_data.find(b'</SVG>', svg_start)
-        if svg_end != -1:
-            svg_data = file_data[svg_start:svg_end + 6]  # Incluir </svg>
-            png_data = convert_svg_to_png(svg_data)
-            return "png", png_data
-    
-    # === DETECCIÓN DE VIDEOS EMBEBIDOS ===
-    
-    # Buscar MP4 embebido
-    mp4_start = file_data.find(b'ftyp')
-    if mp4_start != -1 and mp4_start < 20:
-        mp4_data = file_data[mp4_start-4:]  # Incluir los 4 bytes anteriores
-        return "mp4", mp4_data
-    
-    # === DETECCIÓN DE TIPOS DIRECTOS ===
-    
-    # Imágenes directas - TODAS se convierten a PNG
-    if file_data.startswith(b'\x89PNG'):
-        return "png", file_data  # Ya es PNG, no necesita conversión
-    elif file_data.startswith(b'\xFF\xD8\xFF'):
-        # JPEG → PNG
-        png_data = convert_to_png(file_data, "jpg")
+        png_data = convert_to_png(webp_data, "webp")
         return "png", png_data
-    elif file_data.startswith(b'GIF87a') or file_data.startswith(b'GIF89a'):
-        # GIF → PNG
-        png_data = convert_to_png(file_data, "gif")
-        return "png", png_data
-    elif file_data.startswith(b'RIFF') and b'WEBP' in file_data[:12]:
-        # WEBP → PNG
-        png_data = convert_to_png(file_data, "webp")
-        return "png", png_data
-    elif file_data.startswith(b'BM'):
-        # BMP → PNG
-        png_data = convert_to_png(file_data, "bmp")
-        return "png", png_data
-    elif file_data.startswith(b'II*\x00') or file_data.startswith(b'MM\x00*'):
-        # TIFF → PNG
-        png_data = convert_to_png(file_data, "tiff")
-        return "png", png_data
-    elif file_data.startswith(b'\x00\x00\x01\x00'):
-        # ICO → PNG
-        png_data = convert_to_png(file_data, "ico")
-        return "png", png_data
-    elif file_data.startswith(b'<svg') or file_data.startswith(b'<SVG'):
-        # SVG → PNG (requiere conversión especial)
-        png_data = convert_svg_to_png(file_data)
-        return "png", png_data
-    
-    # Videos directos
-    elif file_data.startswith(b'RIFF') and b'AVI' in file_data[:20]:
-        return "avi", file_data
-    elif file_data.startswith(b'\x1a\x45\xdf\xa3'):
-        return "mkv", file_data
-    
-    # Audio directo
-    elif file_data.startswith(b'ID3') or file_data.startswith(b'\xff\xfb'):
-        return "mp3", file_data
-    elif file_data.startswith(b'RIFF') and b'WAVE' in file_data[:20]:
-        return "wav", file_data
     
     # Fallback
-    else:
-        return "bin", file_data
+    return "bin", file_data
 
 def cleanup_old_files():
     """Limpia archivos antiguos (más de 1 día)"""
     try:
-        output_dir = "output"
-        if not os.path.exists(output_dir):
-            return 0
-        
-        import time
         current_time = time.time()
         cleaned_count = 0
         total_files = 0
         
-        for filename in os.listdir(output_dir):
-            file_path = os.path.join(output_dir, filename)
+        for filename in os.listdir(UPLOAD_FOLDER):
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
             if os.path.isfile(file_path):
                 total_files += 1
                 file_age = current_time - os.path.getmtime(file_path)
@@ -371,17 +336,16 @@ def decode_image():
             }), 400
         
         image_url = data['url']
-        # Generar nombre automático basado en timestamp
-        import time
-        output_name = f"decoded_{int(time.time())}"
+        print(f"Descargando imagen: {image_url}")
         
         # Descargar imagen
-        print(f"Descargando imagen: {image_url}")
         image_bytes = download_image_from_url(image_url)
+        print(f"Imagen descargada: {len(image_bytes)} bytes")
         
         # Procesar imagen
         print("Procesando imagen...")
         img_array = load_image_from_bytes(image_bytes)
+        print(f"Imagen procesada: {img_array.shape}")
         
         # Extraer datos
         print("Extrayendo datos ocultos...")
@@ -393,21 +357,24 @@ def decode_image():
                 "success": False
             }), 404
         
+        print(f"Bits extraidos: {len(binary_data)}")
+        
         # Convertir a bytes
         file_data = binary_to_bytes(binary_data)
-        file_type, extracted_data = detect_file_type(file_data)
+        print(f"Bytes extraidos: {len(file_data)}")
         
-        # Crear directorio de salida si no existe
-        output_dir = "output"
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
+        # Detectar tipo y convertir
+        file_type, extracted_data = detect_file_type(file_data)
+        print(f"Tipo detectado: {file_type}, tamaño: {len(extracted_data)} bytes")
         
         # Limpiar archivos antiguos
         cleaned_files = cleanup_old_files()
         
         # Crear archivo con nombre único
-        temp_filename = f"{output_name}_{uuid.uuid4().hex[:8]}.{file_type}"
-        file_path = os.path.join(output_dir, temp_filename)
+        timestamp = int(time.time())
+        unique_id = str(uuid.uuid4())[:8]
+        temp_filename = f"decoded_{timestamp}_{unique_id}.{file_type}"
+        file_path = os.path.join(UPLOAD_FOLDER, temp_filename)
         
         # Guardar archivo
         with open(file_path, 'wb') as f:
@@ -439,6 +406,7 @@ def decode_image():
         })
         
     except Exception as e:
+        print(f"Error en decode: {e}")
         return jsonify({
             "error": str(e),
             "success": False
@@ -448,8 +416,7 @@ def decode_image():
 def download_file(filename):
     """Descarga archivo decodificado"""
     try:
-        output_dir = "output"
-        file_path = os.path.join(output_dir, filename)
+        file_path = os.path.join(UPLOAD_FOLDER, filename)
         
         if not os.path.exists(file_path):
             return jsonify({"error": "Archivo no encontrado"}), 404
@@ -458,55 +425,11 @@ def download_file(filename):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/decode/direct', methods=['POST'])
-def decode_image_direct():
-    """Decodifica imagen y devuelve archivo directamente"""
-    try:
-        data = request.get_json()
-        
-        if not data or 'url' not in data:
-            return jsonify({"error": "URL requerida"}), 400
-        
-        image_url = data['url']
-        
-        # Procesar imagen (mismo código que arriba)
-        image_bytes = download_image_from_url(image_url)
-        img_array = load_image_from_bytes(image_bytes)
-        binary_data = extract_binary_from_lsb(img_array)
-        
-        if not binary_data:
-            return jsonify({"error": "No se encontraron datos ocultos"}), 404
-        
-        file_data = binary_to_bytes(binary_data)
-        file_type, extracted_data = detect_file_type(file_data)
-        
-        # Crear directorio de salida si no existe
-        output_dir = "output"
-        if not os.path.exists(output_dir):
-            os.makedirs(output_dir)
-        
-        # Limpiar archivos antiguos
-        cleanup_old_files()
-        
-        # Crear archivo con nombre único
-        temp_filename = f"decoded_{uuid.uuid4().hex[:8]}.{file_type}"
-        file_path = os.path.join(output_dir, temp_filename)
-        
-        # Guardar archivo
-        with open(file_path, 'wb') as f:
-            f.write(extracted_data)
-        
-        return send_file(file_path, as_attachment=True, download_name=f"decoded.{file_type}")
-        
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
 if __name__ == '__main__':
-    print("Iniciando TT-Tools API Server...")
+    print("Iniciando TT-Tools API Server (VERSION FINAL)...")
     print("Endpoints disponibles:")
     print("   GET  /health - Health check")
     print("   POST /decode - Decodificar imagen (devuelve JSON)")
-    print("   POST /decode/direct - Decodificar imagen (devuelve archivo)")
     print("   GET  /download/<filename> - Descargar archivo")
     print("\n Ejemplo de uso:")
     print('curl -X POST http://localhost:5000/decode -H "Content-Type: application/json" -d \'{"url": "https://example.com/image.png"}\'')
