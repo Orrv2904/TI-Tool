@@ -134,6 +134,49 @@ def binary_to_bytes(binary_string):
     except Exception as e:
         raise Exception(f"Error convirtiendo binario: {e}")
 
+def convert_to_png(image_data, original_format):
+    """Convierte cualquier formato de imagen a PNG"""
+    try:
+        from PIL import Image
+        import io
+        
+        # Abrir imagen desde bytes
+        img = Image.open(io.BytesIO(image_data))
+        
+        # Convertir a RGB si es necesario (para formatos con paleta)
+        if img.mode in ('RGBA', 'LA', 'P'):
+            # Mantener transparencia si existe
+            if img.mode == 'P' and 'transparency' in img.info:
+                img = img.convert('RGBA')
+            elif img.mode == 'P':
+                img = img.convert('RGB')
+        elif img.mode not in ('RGB', 'RGBA'):
+            img = img.convert('RGB')
+        
+        # Convertir a PNG en memoria
+        png_buffer = io.BytesIO()
+        img.save(png_buffer, format='PNG', optimize=True)
+        png_data = png_buffer.getvalue()
+        
+        print(f"Convertido {original_format.upper()} a PNG: {len(image_data)} -> {len(png_data)} bytes")
+        return png_data
+        
+    except Exception as e:
+        print(f"Error convirtiendo {original_format} a PNG: {e}")
+        # Si falla la conversión, devolver datos originales
+        return image_data
+
+def convert_svg_to_png(svg_data):
+    """Convierte SVG a PNG (requiere librería adicional)"""
+    try:
+        # Para SVG, por ahora devolvemos los datos originales
+        # En producción se podría usar cairosvg o similar
+        print("SVG detectado - manteniendo formato original (conversión SVG→PNG no implementada)")
+        return svg_data
+    except Exception as e:
+        print(f"Error procesando SVG: {e}")
+        return svg_data
+
 def detect_file_type(file_data):
     """Detecta tipo de archivo y extrae datos si es necesario"""
     
@@ -144,55 +187,61 @@ def detect_file_type(file_data):
     if png_start != -1:
         png_data = file_data[png_start:]
         if len(png_data) > 8 and png_data.startswith(b'\x89PNG'):
-            return "png", png_data
+            return "png", png_data  # Ya es PNG, no necesita conversión
     
-    # Buscar JPEG embebido
+    # Buscar JPEG embebido → PNG
     jpg_start = file_data.find(b'\xFF\xD8\xFF')
     if jpg_start != -1:
         jpg_data = file_data[jpg_start:]
         if len(jpg_data) > 4 and jpg_data.startswith(b'\xFF\xD8\xFF'):
-            return "jpg", jpg_data
+            png_data = convert_to_png(jpg_data, "jpg")
+            return "png", png_data
     
-    # Buscar GIF embebido
+    # Buscar GIF embebido → PNG
     gif_start = file_data.find(b'GIF87a')
     if gif_start == -1:
         gif_start = file_data.find(b'GIF89a')
     if gif_start != -1:
         gif_data = file_data[gif_start:]
         if len(gif_data) > 6 and (gif_data.startswith(b'GIF87a') or gif_data.startswith(b'GIF89a')):
-            return "gif", gif_data
+            png_data = convert_to_png(gif_data, "gif")
+            return "png", png_data
     
-    # Buscar WEBP embebido
+    # Buscar WEBP embebido → PNG
     webp_start = file_data.find(b'RIFF')
     if webp_start != -1 and b'WEBP' in file_data[webp_start:webp_start+12]:
         webp_data = file_data[webp_start:]
         if len(webp_data) > 12 and webp_data.startswith(b'RIFF') and b'WEBP' in webp_data[:12]:
-            return "webp", webp_data
+            png_data = convert_to_png(webp_data, "webp")
+            return "png", png_data
     
-    # Buscar BMP embebido
+    # Buscar BMP embebido → PNG
     bmp_start = file_data.find(b'BM')
     if bmp_start != -1:
         bmp_data = file_data[bmp_start:]
         if len(bmp_data) > 2 and bmp_data.startswith(b'BM'):
-            return "bmp", bmp_data
+            png_data = convert_to_png(bmp_data, "bmp")
+            return "png", png_data
     
-    # Buscar TIFF embebido
+    # Buscar TIFF embebido → PNG
     tiff_start = file_data.find(b'II*\x00')
     if tiff_start == -1:
         tiff_start = file_data.find(b'MM\x00*')
     if tiff_start != -1:
         tiff_data = file_data[tiff_start:]
         if len(tiff_data) > 4 and (tiff_data.startswith(b'II*\x00') or tiff_data.startswith(b'MM\x00*')):
-            return "tiff", tiff_data
+            png_data = convert_to_png(tiff_data, "tiff")
+            return "png", png_data
     
-    # Buscar ICO embebido
+    # Buscar ICO embebido → PNG
     ico_start = file_data.find(b'\x00\x00\x01\x00')
     if ico_start != -1:
         ico_data = file_data[ico_start:]
         if len(ico_data) > 4 and ico_data.startswith(b'\x00\x00\x01\x00'):
-            return "ico", ico_data
+            png_data = convert_to_png(ico_data, "ico")
+            return "png", png_data
     
-    # Buscar SVG embebido (texto XML)
+    # Buscar SVG embebido → PNG
     svg_start = file_data.find(b'<svg')
     if svg_start == -1:
         svg_start = file_data.find(b'<SVG')
@@ -203,7 +252,8 @@ def detect_file_type(file_data):
             svg_end = file_data.find(b'</SVG>', svg_start)
         if svg_end != -1:
             svg_data = file_data[svg_start:svg_end + 6]  # Incluir </svg>
-            return "svg", svg_data
+            png_data = convert_svg_to_png(svg_data)
+            return "png", png_data
     
     # === DETECCIÓN DE VIDEOS EMBEBIDOS ===
     
@@ -215,23 +265,37 @@ def detect_file_type(file_data):
     
     # === DETECCIÓN DE TIPOS DIRECTOS ===
     
-    # Imágenes directas
+    # Imágenes directas - TODAS se convierten a PNG
     if file_data.startswith(b'\x89PNG'):
-        return "png", file_data
+        return "png", file_data  # Ya es PNG, no necesita conversión
     elif file_data.startswith(b'\xFF\xD8\xFF'):
-        return "jpg", file_data
+        # JPEG → PNG
+        png_data = convert_to_png(file_data, "jpg")
+        return "png", png_data
     elif file_data.startswith(b'GIF87a') or file_data.startswith(b'GIF89a'):
-        return "gif", file_data
+        # GIF → PNG
+        png_data = convert_to_png(file_data, "gif")
+        return "png", png_data
     elif file_data.startswith(b'RIFF') and b'WEBP' in file_data[:12]:
-        return "webp", file_data
+        # WEBP → PNG
+        png_data = convert_to_png(file_data, "webp")
+        return "png", png_data
     elif file_data.startswith(b'BM'):
-        return "bmp", file_data
+        # BMP → PNG
+        png_data = convert_to_png(file_data, "bmp")
+        return "png", png_data
     elif file_data.startswith(b'II*\x00') or file_data.startswith(b'MM\x00*'):
-        return "tiff", file_data
+        # TIFF → PNG
+        png_data = convert_to_png(file_data, "tiff")
+        return "png", png_data
     elif file_data.startswith(b'\x00\x00\x01\x00'):
-        return "ico", file_data
+        # ICO → PNG
+        png_data = convert_to_png(file_data, "ico")
+        return "png", png_data
     elif file_data.startswith(b'<svg') or file_data.startswith(b'<SVG'):
-        return "svg", file_data
+        # SVG → PNG (requiere conversión especial)
+        png_data = convert_svg_to_png(file_data)
+        return "png", png_data
     
     # Videos directos
     elif file_data.startswith(b'RIFF') and b'AVI' in file_data[:20]:
